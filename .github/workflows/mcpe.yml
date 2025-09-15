@@ -1,1 +1,70 @@
 
+name: Minecraft PE Server with Ngrok (Best Version)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  run-server:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360  # 6 hours max
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y unzip wget screen curl jq
+
+      - name: Download Minecraft Bedrock Server 1.21.101.1
+        run: |
+          wget https://minecraft.azureedge.net/bin-linux/bedrock-server-1.21.101.1.zip -O bedrock-server.zip
+          unzip bedrock-server.zip -d bedrock
+          chmod +x bedrock/bedrock_server
+
+      - name: Download Ngrok
+        run: |
+          wget https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-linux-amd64.zip -O ngrok.zip
+          unzip ngrok.zip
+          chmod +x ngrok
+
+      - name: Authenticate Ngrok
+        run: |
+          ./ngrok authtoken ${{ secrets.NGROK_TOKEN }}
+
+      - name: Start Ngrok TCP tunnel and wait for IP
+        run: |
+          # Start TCP tunnel in background with logs
+          ./ngrok tcp 19132 --log=ngrok.log &
+          # Wait until tunnel is ready
+          for i in $(seq 1 20); do
+            sleep 2
+            NGROK_ADDR=$(grep -oP 'tcp://\S+' ngrok.log | head -1)
+            if [ ! -z "$NGROK_ADDR" ]; then
+              echo "Ngrok tunnel ready → $NGROK_ADDR"
+              echo "NGROK_ADDR=$NGROK_ADDR" >> $GITHUB_ENV
+              break
+            fi
+          done
+
+      - name: Start Minecraft Server in Screen
+        run: |
+          cd bedrock
+          screen -dmS mcserver ./bedrock_server
+          echo "Server started! Public IP:Port → $NGROK_ADDR"
+
+      - name: Keep server running for 5 hours
+        run: |
+          sleep 18000  # 5 hours
+          screen -S mcserver -X quit
+          echo "Server stopped after 5 hours"
+
+      - name: Save world to GitHub
+        run: |
+          git config --global user.email "bot@example.com"
+          git config --global user.name "MCPE Bot"
+          git add bedrock/worlds/
+          git commit -m "Auto-save world after 5 hours"
+          git push
